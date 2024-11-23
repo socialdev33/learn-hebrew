@@ -37,10 +37,27 @@ app.use('/api/auth', authRouter);
 app.use('/api/achievements', authenticateToken, achievementsRouter);
 app.use('/api/goals', authenticateToken, goalsRouter);
 
-// Error handling
+// Rate limiting middleware (optional but recommended)
+const rateLimit = {
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100 // limit each IP to 100 requests per windowMs
+};
+
+app.use('/api/', rateLimit);
+
+// Global error handling
 app.use((err, req, res, next) => {
   console.error(err.stack);
-  res.status(500).json({ message: 'Something went wrong!' });
+  res.status(500).json({ 
+    message: process.env.NODE_ENV === 'production' 
+      ? 'Something went wrong!' 
+      : err.message 
+  });
+});
+
+// Handle 404 routes
+app.use('*', (req, res) => {
+  res.status(404).json({ message: 'Route not found' });
 });
 
 app.listen(PORT, () => {

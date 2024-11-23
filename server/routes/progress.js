@@ -5,8 +5,65 @@ import { checkAchievements } from './achievements.js';
 const router = express.Router();
 const prisma = new PrismaClient();
 
-// Get user's overall progress
-router.get('/overview', async (req, res) => {
+// Constants
+const LEVEL_THRESHOLDS = {
+  beginner: { min: 0, max: 1000 },
+  intermediate: { min: 1000, max: 2500 },
+  advanced: { min: 2500, max: 5000 },
+  expert: { min: 5000, max: null }
+};
+
+const LEVELS = Object.keys(LEVEL_THRESHOLDS);
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+// Utility functions
+const getNextLevel = (currentLevel) => {
+  const currentIndex = LEVELS.indexOf(currentLevel);
+  return currentIndex < LEVELS.length - 1 ? LEVELS[currentIndex + 1] : null;
+};
+
+const calculateLevelProgress = (xp, level) => {
+  const threshold = LEVEL_THRESHOLDS[level];
+  if (!threshold?.max) return 100;
+
+  const progress = ((xp - threshold.min) / (threshold.max - threshold.min)) * 100;
+  return Math.min(100, Math.round(progress));
+};
+
+const calculateStats = (user) => {
+  if (!user) throw new Error('User data is required');
+
+  const completedStories = user.storyProgress.filter(p => p.completed);
+  const totalScore = completedStories.reduce((acc, p) => acc + (p.score || 0), 0);
+  const totalPracticeTime = user.practiceResults.reduce((acc, p) => acc + p.timeSpent, 0);
+
+  return {
+    totalXP: user.xp,
+    streak: user.streak,
+    storiesCompleted: completedStories.length,
+    averageScore: completedStories.length ? Math.round(totalScore / completedStories.length) : 0,
+    practiceTime: totalPracticeTime,
+    achievements: user.achievements.length,
+    activeGoals: user.goals.length,
+    levelProgress: {
+      current: user.level,
+      xp: user.xp,
+      nextLevel: getNextLevel(user.level),
+      progress: calculateLevelProgress(user.xp, user.level)
+    }
+  };
+};
+
+const hasStreakBroken = (lastActivity) => {
+  if (!lastActivity) return false;
+
+  const today = new Date();
+  const timeDiff = today.getTime() - lastActivity.getTime();
+  return timeDiff > MS_PER_DAY;
+};
+
+// Request handlers
+const getProgressOverview = async (req, res) => {
   try {
     const user = await prisma.user.findUnique({
       where: { id: req.user.userId },
@@ -16,8 +73,16 @@ router.get('/overview', async (req, res) => {
             story: true
           }
         },
-        practiceResults: true,
-        achievements: true,
+        practiceResults: {
+          select: {
+            timeSpent: true
+          }
+        },
+        achievements: {
+          select: {
+            id: true
+          }
+        },
         goals: {
           where: {
             endDate: {
@@ -28,64 +93,61 @@ router.get('/overview', async (req, res) => {
       }
     });
 
-    // Calculate statistics
-    const stats = {
-      totalXP: user.xp,
-      streak: user.streak,
-      storiesCompleted: user.storyProgress.filter(p => p.completed).length,
-      averageScore: Math.round(
-        user.storyProgress.reduce((acc, p) => acc + (p.score || 0), 0) / 
-        user.storyProgress.length || 0
-      ),
-      practiceTime: user.practiceResults.reduce((acc, p) => acc + p.timeSpent, 0),
-      achievements: user.achievements.length,
-      activeGoals: user.goals.length,
-      levelProgress: {
-        current: user.level,
-        xp: user.xp,
-        nextLevel: getNextLevel(user.level),
-        progress: calculateLevelProgress(user.xp, user.level)
-      }
-    };
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
 
-    // Get recent activity
-    const recentActivity = await prisma.storyProgress.findMany({
-      where: {
-        userId: req.user.userId
-      },
-      include: {
-        story: true
-      },
-      orderBy: {
-        updatedAt: 'desc'
-      },
-      take: 5
-    });
+    const [stats, recentActivity] = await Promise.all([
+      Promise.resolve(calculateStats(user)),
+      prisma.storyProgress.findMany({
+        where: { userId: req.user.userId },
+        include: {
+          story: {
+            select: {
+              id: true,
+              title: true,
+              level: true
+            }
+          }
+        },
+        orderBy: { updatedAt: 'desc' },
+        take: 5
+      })
+    ]);
 
     res.json({
       stats,
       recentActivity
     });
   } catch (error) {
-    res.status(400).json({ message: error.message });
+    console.error('Error fetching progress overview:', error);
+    res.status(error.status || 500).json({
+      message: 'Error fetching progress overview',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
-});
+};
 
-// Update daily streak
-router.post('/streak', async (req, res) => {
+const updateStreak = async (req, res) => {
   try {
     const user = await prisma.user.findUnique({
-      where: { id: req.user.userId }
+      where: { id: req.user.userId },
+      select: {
+        lastActivity: true,
+        streak: true
+      }
     });
 
-    const lastActivity = user.lastActivity ? new Date(user.lastActivity) : null;
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
     const today = new Date();
-    
-    // Check if streak should be updated
-    if (!lastActivity || 
-        lastActivity.toDateString() !== today.toDateString()) {
-      const streakBroken = lastActivity && 
-        (today.getTime() - lastActivity.getTime()) > (24 * 60 * 60 * 1000);
+    const lastActivity = user.lastActivity ? new Date(user.lastActivity) : null;
+
+    // Only update if it's a new day
+    if (!lastActivity || lastActivity.toDateString() !== today.toDateString()) {
+      const streakBroken = hasStreakBroken(lastActivity);
 
       await prisma.user.update({
         where: { id: req.user.userId },
@@ -99,33 +161,21 @@ router.post('/streak', async (req, res) => {
       await checkAchievements(req.user.userId);
     }
 
-    res.json({ success: true });
+    res.json({ 
+      success: true,
+      streak: streakBroken ? 1 : user.streak + 1
+    });
   } catch (error) {
-    res.status(400).json({ message: error.message });
+    console.error('Error updating streak:', error);
+    res.status(error.status || 500).json({
+      message: 'Error updating streak',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
-});
+};
 
-// Helper functions
-function getNextLevel(currentLevel) {
-  const levels = ['beginner', 'intermediate', 'advanced', 'expert'];
-  const currentIndex = levels.indexOf(currentLevel);
-  return currentIndex < levels.length - 1 ? levels[currentIndex + 1] : null;
-}
-
-function calculateLevelProgress(xp, level) {
-  const levelThresholds = {
-    beginner: { min: 0, max: 1000 },
-    intermediate: { min: 1000, max: 2500 },
-    advanced: { min: 2500, max: 5000 },
-    expert: { min: 5000, max: null }
-  };
-
-  const threshold = levelThresholds[level];
-  if (!threshold.max) return 100;
-
-  return Math.min(100, Math.round(
-    ((xp - threshold.min) / (threshold.max - threshold.min)) * 100
-  ));
-}
+// Routes
+router.get('/overview', getProgressOverview);
+router.post('/streak', updateStreak);
 
 export default router;

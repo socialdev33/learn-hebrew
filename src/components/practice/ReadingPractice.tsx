@@ -1,21 +1,50 @@
 import { motion } from 'framer-motion';
 import { Button } from '../ui/button';
-import { ArrowLeft, Volume2, BookOpen, Star, Award } from 'lucide-react';
+import { ArrowLeft, Volume2, BookOpen, Star } from 'lucide-react';
 import { useState } from 'react';
 import { useWindowSize } from 'react-use';
 import Confetti from 'react-confetti';
 
+// Types
 interface Props {
   onBack: () => void;
 }
 
-const levels = [
+interface Level {
+  id: string;
+  name: string;
+  description: string;
+}
+
+interface Option {
+  hebrew: string;
+  transliteration: string;
+  english: string;
+}
+
+interface Question {
+  hebrew: string;
+  transliteration: string;
+  english: string;
+  correctAnswer: string;
+  options: Option[];
+}
+
+interface Story {
+  hebrew: string;
+  transliteration: string;
+  english: string;
+  question: Question;
+}
+
+// Constants
+const LEVELS: Level[] = [
   { id: 'easy', name: 'Easy', description: 'Basic sentences and simple vocabulary' },
   { id: 'medium', name: 'Medium', description: 'Short paragraphs and everyday topics' },
   { id: 'hard', name: 'Hard', description: 'Complex stories and advanced vocabulary' }
 ];
 
-const stories = {
+const STORIES: Record<string, Story[]> = {
   easy: [
     {
       hebrew: 'דני הוא ילד שמח.',
@@ -93,6 +122,65 @@ const stories = {
   ]
 };
 
+// Reusable components
+const LevelCard = ({ level, onSelect }: { level: Level; onSelect: (id: string) => void }) => (
+  <motion.div
+    initial={{ opacity: 0, y: 20 }}
+    animate={{ opacity: 1, y: 0 }}
+    className="relative group"
+  >
+    <div className="absolute -inset-px bg-gradient-to-r from-brand-500 to-blue-500 rounded-xl blur opacity-25 group-hover:opacity-75 transition duration-500" />
+    <button
+      onClick={() => onSelect(level.id)}
+      className="relative w-full bg-white p-6 rounded-xl shadow-lg text-left"
+    >
+      <div className="flex items-center mb-4">
+        <Star className="h-6 w-6 text-brand-600 mr-2" />
+        <h3 className="text-lg font-semibold">{level.name}</h3>
+      </div>
+      <p className="text-gray-600">{level.description}</p>
+    </button>
+  </motion.div>
+);
+
+const AnswerOption = ({ 
+  option, 
+  isSelected, 
+  onSelect 
+}: { 
+  option: Option; 
+  isSelected: boolean; 
+  onSelect: () => void;
+}) => (
+  <button
+    onClick={onSelect}
+    className={`w-full p-4 text-right rounded-lg border-2 transition-colors ${
+      isSelected ? 'border-brand-500 bg-brand-50' : 'border-gray-200 hover:border-brand-300'
+    }`}
+    dir="rtl"
+  >
+    <div>{option.hebrew}</div>
+    <div className="text-sm text-gray-600 text-left">{option.english}</div>
+  </button>
+);
+
+const ResultMessage = ({ 
+  isCorrect 
+}: { 
+  isCorrect: boolean 
+}) => (
+  <motion.div
+    initial={{ opacity: 0, y: -10 }}
+    animate={{ opacity: 1, y: 0 }}
+    className={`p-4 rounded-lg ${
+      isCorrect ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'
+    }`}
+  >
+    {isCorrect ? 'Correct! Well done!' : 'Not quite right. Try again!'}
+  </motion.div>
+);
+
+// Main component
 export function ReadingPractice({ onBack }: Props) {
   const { width, height } = useWindowSize();
   const [selectedLevel, setSelectedLevel] = useState<string | null>(null);
@@ -102,7 +190,7 @@ export function ReadingPractice({ onBack }: Props) {
   const [showResult, setShowResult] = useState(false);
   const [showConfetti, setShowConfetti] = useState(false);
 
-  const currentStory = selectedLevel ? stories[selectedLevel as keyof typeof stories][0] : null;
+  const currentStory = selectedLevel ? STORIES[selectedLevel]?.[0] : null;
 
   const handleLevelSelect = (level: string) => {
     setSelectedLevel(level);
@@ -117,7 +205,7 @@ export function ReadingPractice({ onBack }: Props) {
 
     const isCorrect = selectedAnswer === currentStory.question.correctAnswer;
     setShowResult(true);
-    
+
     if (isCorrect) {
       setShowConfetti(true);
       setTimeout(() => setShowConfetti(false), 3000);
@@ -127,7 +215,7 @@ export function ReadingPractice({ onBack }: Props) {
   return (
     <div className="min-h-screen bg-gray-50 pt-20">
       {showConfetti && <Confetti width={width} height={height} />}
-      
+
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -143,32 +231,19 @@ export function ReadingPractice({ onBack }: Props) {
 
           {!selectedLevel ? (
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              {levels.map((level) => (
-                <motion.div
-                  key={level.id}
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className="relative group"
-                >
-                  <div className="absolute -inset-px bg-gradient-to-r from-brand-500 to-blue-500 rounded-xl blur opacity-25 group-hover:opacity-75 transition duration-500" />
-                  <button
-                    onClick={() => handleLevelSelect(level.id)}
-                    className="relative w-full bg-white p-6 rounded-xl shadow-lg text-left"
-                  >
-                    <div className="flex items-center mb-4">
-                      <Star className="h-6 w-6 text-brand-600 mr-2" />
-                      <h3 className="text-lg font-semibold">{level.name}</h3>
-                    </div>
-                    <p className="text-gray-600">{level.description}</p>
-                  </button>
-                </motion.div>
+              {LEVELS.map((level) => (
+                <LevelCard 
+                  key={level.id} 
+                  level={level} 
+                  onSelect={handleLevelSelect} 
+                />
               ))}
             </div>
           ) : currentStory ? (
             <div className="space-y-8">
               <div className="space-y-4">
                 <div className="text-2xl" dir="rtl">{currentStory.hebrew}</div>
-                
+
                 <div className="flex gap-4">
                   <Button
                     variant="outline"
@@ -178,7 +253,7 @@ export function ReadingPractice({ onBack }: Props) {
                     <BookOpen className="h-5 w-5 mr-2" />
                     {showTransliteration ? 'Hide' : 'Show'} Transliteration
                   </Button>
-                  
+
                   <Button
                     variant="outline"
                     onClick={() => setShowTranslation(!showTranslation)}
@@ -217,38 +292,19 @@ export function ReadingPractice({ onBack }: Props) {
 
                 <div className="space-y-4">
                   {currentStory.question.options.map((option) => (
-                    <button
+                    <AnswerOption
                       key={option.hebrew}
-                      onClick={() => setSelectedAnswer(option.hebrew)}
-                      className={`w-full p-4 text-right rounded-lg border-2 transition-colors ${
-                        selectedAnswer === option.hebrew
-                          ? 'border-brand-500 bg-brand-50'
-                          : 'border-gray-200 hover:border-brand-300'
-                      }`}
-                      dir="rtl"
-                    >
-                      <div>{option.hebrew}</div>
-                      <div className="text-sm text-gray-600 text-left">
-                        {option.english}
-                      </div>
-                    </button>
+                      option={option}
+                      isSelected={selectedAnswer === option.hebrew}
+                      onSelect={() => setSelectedAnswer(option.hebrew)}
+                    />
                   ))}
                 </div>
 
                 {showResult && (
-                  <motion.div
-                    initial={{ opacity: 0, y: -10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    className={`p-4 rounded-lg ${
-                      selectedAnswer === currentStory.question.correctAnswer
-                        ? 'bg-green-50 text-green-700'
-                        : 'bg-red-50 text-red-700'
-                    }`}
-                  >
-                    {selectedAnswer === currentStory.question.correctAnswer
-                      ? 'Correct! Well done!'
-                      : 'Not quite right. Try again!'}
-                  </motion.div>
+                  <ResultMessage 
+                    isCorrect={selectedAnswer === currentStory.question.correctAnswer} 
+                  />
                 )}
 
                 <div className="flex justify-between">

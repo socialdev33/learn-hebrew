@@ -1,5 +1,6 @@
 import { ReadingLevel } from '@/types/reading';
 
+// Original data structure remains unchanged
 export const readingLevels: ReadingLevel[] = [
   {
     id: 'level-1',
@@ -107,3 +108,47 @@ export const readingLevels: ReadingLevel[] = [
     ]
   }
 ];
+
+// Helper functions to work with the data
+export const findLevelById = (levelId: string): ReadingLevel | undefined =>
+  readingLevels.find(level => level.id === levelId);
+
+export const findStoryById = (storyId: string) => {
+  for (const level of readingLevels) {
+    const story = level.stories.find(story => story.id === storyId);
+    if (story) return story;
+  }
+  return undefined;
+};
+
+export const findNextStory = (currentStoryId: string) => {
+  for (let i = 0; i < readingLevels.length; i++) {
+    const level = readingLevels[i];
+    const storyIndex = level.stories.findIndex(story => story.id === currentStoryId);
+
+    if (storyIndex !== -1) {
+      // Next story in current level
+      if (storyIndex < level.stories.length - 1) {
+        return level.stories[storyIndex + 1];
+      }
+      // First story of next level
+      if (i < readingLevels.length - 1) {
+        return readingLevels[i + 1].stories[0];
+      }
+    }
+  }
+  return undefined;
+};
+
+export const getCorrectAnswer = (story: ReadingLevel['stories'][0], questionId: string) => {
+  const question = story.questions.find(q => q.id === questionId);
+  return question?.options.find(option => option.isCorrect);
+};
+
+export const getTotalQuestions = (story: ReadingLevel['stories'][0]) => 
+  story.questions.length;
+
+export const getLevelByStoryId = (storyId: string) => 
+  readingLevels.find(level => 
+    level.stories.some(story => story.id === storyId)
+  );

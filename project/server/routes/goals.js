@@ -5,6 +5,13 @@ import { z } from 'zod';
 const router = express.Router();
 const prisma = new PrismaClient();
 
+// Schema validation
+const createGoalSchema = z.object({
+  type: z.enum(['daily_xp', 'stories_completed', 'practice_time']),
+  target: z.number().min(1),
+  endDate: z.string().datetime()
+});
+
 // Get user's active goals
 router.get('/', async (req, res) => {
   try {
@@ -13,6 +20,14 @@ router.get('/', async (req, res) => {
         userId: req.user.userId,
         endDate: {
           gte: new Date()
+        }
+      },
+      include: {
+        user: {
+          select: {
+            name: true,
+            xp: true
+          }
         }
       }
     });
@@ -24,12 +39,6 @@ router.get('/', async (req, res) => {
 });
 
 // Create new goal
-const createGoalSchema = z.object({
-  type: z.enum(['daily_xp', 'stories_completed', 'practice_time']),
-  target: z.number().min(1),
-  endDate: z.string().datetime()
-});
-
 router.post('/', async (req, res) => {
   try {
     const { type, target, endDate } = createGoalSchema.parse(req.body);
@@ -39,6 +48,8 @@ router.post('/', async (req, res) => {
         userId: req.user.userId,
         type,
         target,
+        progress: 0,
+        completed: false,
         endDate: new Date(endDate)
       }
     });
@@ -88,6 +99,53 @@ router.patch('/:id/progress', async (req, res) => {
     }
 
     res.json(updatedGoal);
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+});
+
+// Delete goal
+router.delete('/:id', async (req, res) => {
+  try {
+    const goalId = req.params.id;
+
+    const goal = await prisma.goal.findUnique({
+      where: { id: goalId }
+    });
+
+    if (!goal) {
+      return res.status(404).json({ message: 'Goal not found' });
+    }
+
+    if (goal.userId !== req.user.userId) {
+      return res.status(403).json({ message: 'Unauthorized' });
+    }
+
+    await prisma.goal.delete({
+      where: { id: goalId }
+    });
+
+    res.json({ message: 'Goal deleted successfully' });
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+});
+
+// Get goal statistics
+router.get('/stats', async (req, res) => {
+  try {
+    const stats = await prisma.goal.groupBy({
+      by: ['type'],
+      where: {
+        userId: req.user.userId,
+        completed: true
+      },
+      _count: {
+        _all: true
+      }
+    });
+
+    res.json(stats);
   } catch (error) {
     res.status(400).json({ message: error.message });
   }

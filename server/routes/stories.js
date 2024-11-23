@@ -5,24 +5,73 @@ import { z } from 'zod';
 const router = express.Router();
 const prisma = new PrismaClient();
 
-// Get stories based on user's level with pagination
-router.get('/', async (req, res) => {
+// Validation schemas
+const paginationSchema = z.object({
+  page: z.string().transform(val => parseInt(val) || 1),
+  limit: z.string().transform(val => parseInt(val) || 10)
+});
+
+const submitProgressSchema = z.object({
+  answers: z.array(z.object({
+    questionId: z.string(),
+    answer: z.string()
+  })),
+  timeSpent: z.number().positive()
+});
+
+// Utility functions
+const calculateXPAndLevel = async (userId, score, storyPoints) => {
+  const xpGained = Math.round(score * (storyPoints / 100));
+  const user = await prisma.user.update({
+    where: { id: userId },
+    data: { xp: { increment: xpGained } }
+  });
+
+  let newLevel = user.level;
+  if (user.xp >= 2500 && user.level === 'intermediate') {
+    newLevel = 'advanced';
+  } else if (user.xp >= 1000 && user.level === 'beginner') {
+    newLevel = 'intermediate';
+  }
+
+  if (newLevel !== user.level) {
+    await prisma.user.update({
+      where: { id: userId },
+      data: { level: newLevel }
+    });
+  }
+
+  return { xpGained, levelUp: newLevel !== user.level ? newLevel : null };
+};
+
+const calculateQuizScore = (answers, questions) => {
+  const correctAnswers = answers.reduce((count, answer) => {
+    const question = questions.find(q => q.id === answer.questionId);
+    return question?.answer === answer.answer ? count + 1 : count;
+  }, 0);
+
+  return Math.round((correctAnswers / answers.length) * 100);
+};
+
+// Request handlers
+const getStories = async (req, res) => {
   try {
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 10;
+    const { page, limit } = paginationSchema.parse(req.query);
     const skip = (page - 1) * limit;
 
     const user = await prisma.user.findUnique({
-      where: { id: req.user.userId }
+      where: { id: req.user.userId },
+      select: { level: true }
     });
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
 
     const [stories, total] = await Promise.all([
       prisma.story.findMany({
         where: { 
-          OR: [
-            { level: user.level },
-            { level: 'all' }
-          ]
+          OR: [{ level: user.level }, { level: 'all' }]
         },
         include: {
           vocabulary: true,
@@ -47,10 +96,7 @@ router.get('/', async (req, res) => {
       }),
       prisma.story.count({
         where: {
-          OR: [
-            { level: user.level },
-            { level: 'all' }
-          ]
+          OR: [{ level: user.level }, { level: 'all' }]
         }
       })
     ]);
@@ -65,12 +111,15 @@ router.get('/', async (req, res) => {
       }
     });
   } catch (error) {
-    res.status(400).json({ message: error.message });
+    console.error('Error fetching stories:', error);
+    res.status(error.status || 400).json({ 
+      message: 'Error fetching stories',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
-});
+};
 
-// Get story details with user's progress
-router.get('/:id', async (req, res) => {
+const getStoryDetails = async (req, res) => {
   try {
     const story = await prisma.story.findUnique({
       where: { id: req.params.id },
@@ -105,23 +154,18 @@ router.get('/:id', async (req, res) => {
       userProgress: userProgress || { completed: false, score: 0 }
     });
   } catch (error) {
-    res.status(400).json({ message: error.message });
+    console.error('Error fetching story details:', error);
+    res.status(error.status || 400).json({ 
+      message: 'Error fetching story details',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
-});
+};
 
-// Submit story progress and quiz answers
-const submitProgressSchema = z.object({
-  answers: z.array(z.object({
-    questionId: z.string(),
-    answer: z.string()
-  })),
-  timeSpent: z.number()
-});
-
-router.post('/:id/submit', async (req, res) => {
+const submitProgress = async (req, res) => {
   try {
     const { answers, timeSpent } = submitProgressSchema.parse(req.body);
-    
+
     const story = await prisma.story.findUnique({
       where: { id: req.params.id },
       include: {
@@ -137,120 +181,96 @@ router.post('/:id/submit', async (req, res) => {
       return res.status(404).json({ message: 'Story not found' });
     }
 
-    // Calculate score
-    let correctAnswers = 0;
-    answers.forEach(answer => {
-      const question = story.quiz.questions.find(q => q.id === answer.questionId);
-      if (question && question.answer === answer.answer) {
-        correctAnswers++;
-      }
-    });
+    const score = calculateQuizScore(answers, story.quiz.questions);
 
-    const score = Math.round((correctAnswers / answers.length) * 100);
-
-    // Update progress
-    const progress = await prisma.storyProgress.upsert({
-      where: {
-        userId_storyId: {
+    const [progress, xpUpdate] = await Promise.all([
+      prisma.storyProgress.upsert({
+        where: {
+          userId_storyId: {
+            userId: req.user.userId,
+            storyId: story.id
+          }
+        },
+        update: {
+          completed: true,
+          score,
+          timeSpent,
+          attempts: { increment: 1 }
+        },
+        create: {
           userId: req.user.userId,
-          storyId: story.id
+          storyId: story.id,
+          completed: true,
+          score,
+          timeSpent,
+          attempts: 1
         }
-      },
-      update: {
-        completed: true,
-        score,
-        timeSpent,
-        attempts: {
-          increment: 1
-        }
-      },
-      create: {
-        userId: req.user.userId,
-        storyId: story.id,
-        completed: true,
-        score,
-        timeSpent,
-        attempts: 1
-      }
-    });
-
-    // Update user XP
-    const xpGained = Math.round(score * (story.points / 100));
-    await prisma.user.update({
-      where: { id: req.user.userId },
-      data: {
-        xp: { increment: xpGained }
-      }
-    });
-
-    // Check for level up
-    const user = await prisma.user.findUnique({
-      where: { id: req.user.userId }
-    });
-
-    let newLevel = user.level;
-    if (user.xp >= 1000 && user.level === 'beginner') {
-      newLevel = 'intermediate';
-    } else if (user.xp >= 2500 && user.level === 'intermediate') {
-      newLevel = 'advanced';
-    }
-
-    if (newLevel !== user.level) {
-      await prisma.user.update({
-        where: { id: req.user.userId },
-        data: { level: newLevel }
-      });
-    }
+      }),
+      calculateXPAndLevel(req.user.userId, score, story.points)
+    ]);
 
     res.json({
       progress,
-      xpGained,
-      levelUp: newLevel !== user.level ? newLevel : null
+      ...xpUpdate
     });
   } catch (error) {
-    res.status(400).json({ message: error.message });
+    console.error('Error submitting progress:', error);
+    res.status(error.status || 400).json({ 
+      message: 'Error submitting progress',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
-});
+};
 
-// Get user's story statistics
-router.get('/stats/overview', async (req, res) => {
+const getStats = async (req, res) => {
   try {
-    const stats = await prisma.storyProgress.aggregate({
-      where: {
-        userId: req.user.userId,
-        completed: true
-      },
-      _count: true,
-      _avg: {
-        score: true,
-        timeSpent: true
-      },
-      _sum: {
-        attempts: true
-      }
-    });
-
-    const recentProgress = await prisma.storyProgress.findMany({
-      where: {
-        userId: req.user.userId,
-        completed: true
-      },
-      include: {
-        story: true
-      },
-      orderBy: {
-        updatedAt: 'desc'
-      },
-      take: 5
-    });
+    const [stats, recentProgress] = await Promise.all([
+      prisma.storyProgress.aggregate({
+        where: {
+          userId: req.user.userId,
+          completed: true
+        },
+        _count: true,
+        _avg: {
+          score: true,
+          timeSpent: true
+        },
+        _sum: {
+          attempts: true
+        }
+      }),
+      prisma.storyProgress.findMany({
+        where: {
+          userId: req.user.userId,
+          completed: true
+        },
+        include: {
+          story: true
+        },
+        orderBy: {
+          updatedAt: 'desc'
+        },
+        take: 5
+      })
+    ]);
 
     res.json({
       stats,
       recentProgress
     });
   } catch (error) {
-    res.status(400).json({ message: error.message });
+    console.error('Error fetching stats:', error);
+    res.status(error.status || 400).json({ 
+      message: 'Error fetching stats',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
-});
+};
+
+// Routes
+router.get('/', getStories);
+router.get('/:id', getStoryDetails);
+router.post('/:id/submit', submitProgress);
+router.get('/stats/overview', getStats);
 
 export default router;

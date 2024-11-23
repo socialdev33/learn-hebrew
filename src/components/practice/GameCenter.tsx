@@ -1,4 +1,3 @@
-```typescript
 import { motion } from 'framer-motion';
 import { Button } from '../ui/button';
 import { ArrowLeft, Gamepad2, Trophy, Star } from 'lucide-react';

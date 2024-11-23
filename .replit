@@ -1,0 +1,30 @@
+modules = ["nodejs-20", "web", "nodejs-22"]
+run = "npm run dev"
+
+[nix]
+channel = "stable-24_05"
+
+[deployment]
+run = ["sh", "-c", "npm run dev"]
+deploymentTarget = "gce"
+ignorePorts = true
+
+[[ports]]
+localPort = 3000
+externalPort = 3001
+
+[[ports]]
+localPort = 5173
+externalPort = 80
+exposeLocalhost = true
+
+[[ports]]
+localPort = 5555
+externalPort = 3000
+
+[auth]
+pageEnabled = true
+buttonEnabled = false
+
+[objectStorage]
+defaultBucketID = "replit-objstore-5aafa4b2-050a-4818-a963-f346107ce65e"

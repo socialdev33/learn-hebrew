@@ -1,42 +1,54 @@
 import { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
-import { useAuthStore } from '@/store/authStore';
-import { Button } from '../ui/button';
-import { Mail, Lock, User } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Button } from '@/components/ui/button';
+import { Link } from 'react-router-dom';
+import { User, Mail, Lock } from 'lucide-react';
 
 export function SignupForm() {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState('');
   const navigate = useNavigate();
-  const register = useAuthStore(state => state.register);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError('');
     setIsLoading(true);
-    
+    setError('');
+
     try {
-      await register(email, password, name);
-      navigate('/dashboard');
-    } catch (err) {
-      setError('Registration failed. Please try again.');
+      const response = await fetch('http://localhost:3000/api/auth/register', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ name, email, password }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.message || 'Registration failed');
+      }
+
+      // Registration successful
+      navigate('/login');
+    } catch (err: any) {
+      setError(err.message || 'Something went wrong');
     } finally {
       setIsLoading(false);
     }
   };
 
   return (
-    <div className="max-w-md w-full space-y-8 bg-white p-8 rounded-xl shadow-lg">
-      <div>
-        <h2 className="text-3xl font-bold text-center">Create Account</h2>
-        <p className="mt-2 text-center text-gray-600">Start your Hebrew learning journey</p>
-      </div>
-      
+    <div className="bg-white py-8 px-4 shadow sm:rounded-lg sm:px-10">
+      <h2 className="text-center text-3xl font-extrabold text-gray-900">
+        Create your account
+      </h2>
+
       {error && (
-        <div className="bg-red-50 text-red-500 p-3 rounded-lg text-sm">
+        <div className="mt-4 p-2 text-red-500 bg-red-50 rounded">
           {error}
         </div>
       )}
